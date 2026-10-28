@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Status Monitor | Zero Hash + Sumsub</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      line-height: 1.6;
+      padding: 20px;
+    }
+    .container { width: 100%; margin: 0 auto; }
+
+    /* Summary Tiles */
+    .summary-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+    .summary-grid > div {
+      flex: 1 1 45%;
+      min-width: 400px;
+    }
+    .summary-tile {
+      border-radius: 16px;
+      padding: 40px;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      min-height: 400px;
+    }
+    .summary-tile:hover { transform: translateY(-2px); }
+    .summary-tile.operational {
+      background: #23863626;
+      border: 2px solid #3fb950;
+    }
+    .summary-tile.degraded {
+      background: #9e6a0326;
+      border: 2px solid #d29922;
+    }
+    .summary-tile.outage {
+      background: #da363326;
+      border: 2px solid #f85149;
+    }
+    .summary-tile.maintenance {
+      background: #8957e526;
+      border: 2px solid #a371f7;
+    }
+    .summary-tile-logo-only {
+      max-width: 600px;
+      max-height: 360px;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+
+    @media (max-width: 600px) {
+      .summary-grid { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="summary-grid">
+      <div id="zh-summary" class="summary-tile operational" data-service="zerohash" data-status="operational">
+        <img src="logos/zerohash.png" alt="Zero Hash" class="summary-tile-logo-only">
+      </div>
+
+      <div id="ss-summary" class="summary-tile operational" data-service="sumsub" data-status="operational">
+        <img src="logos/sumsub.png" alt="Sumsub" class="summary-tile-logo-only">
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // Status data - fetched live from status pages (not cached)
+    // Only logo images are cached by browser; statuses always fresh
+    const ZEROSHASH_STATUS_URL = 'https://status.zerohash.com/api/v2/summary.json';
+    const SUMSUB_STATUS_URL = 'https://status.sumsub.com/api/v2/summary.json';
+
+    let ZEROHASH_COMPONENTS = [];
+    let SUMSUB_SGP = [];
+
+
+    function getTileClass(status) {
+      const s = (status || '').toLowerCase().replace(/_/g, ' ');
+      if (s === 'operational' || s === 'resolved') return 'operational';
+      if (s === 'degraded performance' || s === 'monitoring') return 'degraded';
+      if (s === 'partial outage' || s === 'unresolved') return 'outage';
+      if (s === 'major outage') return 'outage';
+      if (s === '') return 'operational'; // Default when no data
+      return 'maintenance';
+    }
+
+    function countIssues(items) {
+      if (!items || items.length === 0) return 0; // No data = no issues
+      return items.filter(i => {
+        const s = (i.status || '').toLowerCase().replace(/_/g, ' ');
+        // These are "good" statuses - everything else is an issue
+        const goodStatuses = ['operational', 'resolved', ''];
+        return !goodStatuses.includes(s);
+      }).length;
+    }
+
+    function formatDuration(ms) {
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      const days = Math.floor(hours / 24);
+
+      if (days > 0) return `${days}d ${hours % 24}h ${minutes % 60}m`;
+      if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+      if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+      return `${seconds}s`;
+    }
+
+    function getServiceStatus(components) {
+      const issueCount = countIssues(components);
+      if (issueCount === 0) return { status: 'Operational', class: 'operational' };
+
+      // Find the worst status (normalize to lowercase with spaces)
+      const statuses = components.map(c => (c.status || '').toLowerCase().replace(/_/g, ' '));
+
+      // Debug: log non-operational statuses
+      const badOnes = components.filter(c => {
+        const s = (c.status || '').toLowerCase().replace(/_/g, ' ');
+        return !['operational', 'resolved', ''].includes(s);
+      });
+      console.log('Non-operational components:', badOnes.map(c => ({ name: c.name, status: c.status })));
+
+      if (statuses.includes('major outage')) return { status: 'Major Outage', class: 'outage' };
+      if (statuses.includes('partial outage')) return { status: 'Partial Outage', class: 'outage' };
+      if (statuses.includes('degraded performance')) return { status: 'Degraded Performance', class: 'degraded' };
+      if (statuses.includes('under maintenance') || statuses.includes('maintenance')) return { status: 'Maintenance', class: 'maintenance' };
+
+      // Unknown status - default to operational instead of outage
+      return { status: 'Operational', class: 'operational' };
+    }
+
+    function updateServiceTile(serviceId, components) {
+      const tile = document.getElementById(serviceId);
+      const statusInfo = getServiceStatus(components);
+
+      // Update tile class and status
+      tile.className = `summary-tile ${statusInfo.class}`;
+      tile.setAttribute('data-status', statusInfo.status.toLowerCase());
+    }
+
+    function render() {
+      // Update summary tiles
+      updateServiceTile('zh-summary', ZEROHASH_COMPONENTS);
+      updateServiceTile('ss-summary', SUMSUB_SGP);
+    }
+
+    // Fetch fresh status data (not cached)
+    async function fetchStatusData() {
+      const zhTile = document.getElementById('zh-summary');
+      const ssTile = document.getElementById('ss-summary');
+
+      try {
+        const [zhRes, ssRes] = await Promise.all([
+          fetch(ZEROSHASH_STATUS_URL, { cache: 'no-store' }),
+          fetch(SUMSUB_STATUS_URL, { cache: 'no-store' })
+        ]);
+
+        if (zhRes.ok) {
+          const zhData = await zhRes.json();
+          console.log('ZeroHash API:', zhData.components?.map(c => ({ name: c.name, status: c.status })));
+          ZEROHASH_COMPONENTS = zhData.components || [];
+        }
+
+        if (ssRes.ok) {
+          const ssData = await ssRes.json();
+          console.log('Sumsub API:', ssData.components?.map(c => ({ name: c.name, status: c.status })));
+          SUMSUB_SGP = ssData.components || [];
+        }
+
+        render();
+      } catch (err) {
+        console.error('Failed to fetch status:', err);
+        zhTile.className = 'summary-tile degraded';
+        ssTile.className = 'summary-tile degraded';
+      }
+    }
+
+    // Initialize - fetch fresh data, no cache
+    fetchStatusData();
+    setInterval(fetchStatusData, 60000); // Refresh every minute
+  </script>
+</body>
+</html>

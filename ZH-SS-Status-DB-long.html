@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Status Monitor | Zero Hash + Sumsub</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      line-height: 1.6;
+      padding: 20px;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    h1 { font-size: 28px; font-weight: 600; color: #f0f6fc; }
+    h2 { font-size: 20px; font-weight: 500; margin: 24px 0 16px; color: #f0f6fc; }
+    h3 { font-size: 16px; font-weight: 500; margin: 20px 0 12px; color: #8b949e; }
+
+    .issues-tile {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .issues-tile.alert {
+      background: #da363326;
+      border: 1px solid #f85149;
+      color: #f85149;
+    }
+    .issues-tile.success {
+      background: #23863626;
+      border: 1px solid #3fb950;
+      color: #3fb950;
+    }
+    .issues-count {
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .section { margin-bottom: 24px; }
+
+    /* Tile Grid */
+    .tile-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .tile {
+      border-radius: 8px;
+      padding: 16px;
+      transition: all 0.2s;
+      position: relative;
+    }
+    .tile:hover { transform: translateY(-2px); }
+    .tile.operational {
+      background: #23863626;
+      border: 1px solid #3fb950;
+    }
+    .tile.degraded {
+      background: #9e6a0326;
+      border: 1px solid #d29922;
+    }
+    .tile.outage {
+      background: #da363326;
+      border: 1px solid #f85149;
+    }
+    .tile.maintenance {
+      background: #8957e526;
+      border: 1px solid #a371f7;
+    }
+    .tile-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f0f6fc;
+      margin-bottom: 8px;
+      word-break: break-word;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .tile-status {
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.7);
+      text-transform: lowercase;
+      letter-spacing: 0.5px;
+    }
+    .tile-uptime {
+      font-size: 11px;
+      color: rgba(255,255,255,0.7);
+      margin-top: 4px;
+    }
+    .tile-timer {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f0f6fc;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255,255,255,0.2);
+      font-family: 'SF Mono', monospace;
+    }
+
+    .alert-box {
+      background: #da363326;
+      border: 1px solid #f85149;
+      border-left: 4px solid #f85149;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .alert-box.warning {
+      background: #9e6a0326;
+      border-color: #d29922;
+      border-left-color: #d29922;
+    }
+    .alert-box.success {
+      background: #23863626;
+      border-color: #3fb950;
+      border-left-color: #3fb950;
+    }
+    .alert-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .alert-service {
+      font-weight: 600;
+      color: #f0f6fc;
+    }
+    .alert-time {
+      font-size: 12px;
+      color: #8b949e;
+    }
+    .alert-message {
+      font-size: 14px;
+      color: #c9d1d9;
+    }
+    @media (max-width: 600px) {
+      .tile-grid { grid-template-columns: repeat(2, 1fr); }
+      .header { flex-direction: column; align-items: flex-start; gap: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Status Monitor</h1>
+      <div class="issues-tile alert" id="issues-tile">
+        <span>Active Issues:</span>
+        <span class="issues-count" id="issues-count">0</span>
+      </div>
+    </div>
+
+    <div class="section" id="alerts-section">
+      <h2>Recent Alerts</h2>
+      <div id="alerts-container"></div>
+    </div>
+
+    <div class="section">
+      <h2>Zero Hash (zerohash.com)</h2>
+      <div id="zh-tiles" class="tile-grid"></div>
+    </div>
+
+    <div class="section">
+      <h2>Sumsub SGP Region (sumsub.com)</h2>
+      <div id="ss-sgp-tiles" class="tile-grid"></div>
+    </div>
+
+  </div>
+
+  <script>
+    // Status data - captured from external status pages
+    const ZEROHASH_COMPONENTS = [
+      { name: 'Core Resources', status: 'Operational', uptime: '99.99%' },
+      { name: 'PARTICIPANTS', status: 'Operational', uptime: '100.0%' },
+      { name: 'TRANSACT', status: 'Operational', uptime: '100.0%' },
+      { name: 'TRADING', status: 'Operational', uptime: '100.0%' },
+      { name: 'DEPOSIT & WITHDRAWAL', status: 'Operational', uptime: '99.97%' },
+      { name: 'ACCOUNTS', status: 'Operational', uptime: '100.0%' },
+      { name: 'SDK', status: 'Operational', uptime: '100.0%' },
+      { name: 'ONBOARDING', status: 'Operational', uptime: '100.0%' },
+      { name: 'PROFILE', status: 'Operational', uptime: '100.0%' },
+      { name: 'CRYPTO BUY & SELL', status: 'Operational', uptime: '100.0%' },
+      { name: 'FUND', status: 'Operational', uptime: '100.0%' },
+      { name: 'CRYPTO ACCOUNT LINK', status: 'Operational', uptime: '100.0%' },
+      { name: 'CLOB', status: 'Operational', uptime: '100.0%' },
+      { name: 'FIX Gateway', status: 'Operational', uptime: '100.0%' },
+      { name: 'REST Gateway', status: 'Operational', uptime: '100.0%' },
+      { name: 'Web Applications', status: 'Operational', uptime: '100.0%' },
+      { name: 'Client Portal', status: 'Operational', uptime: '100.0%' },
+      { name: 'Secondary Portal', status: 'Operational', uptime: '100.0%' },
+      { name: 'Website', status: 'Operational', uptime: '100.0%' },
+      { name: 'Websockets', status: 'Operational', uptime: '100.0%' },
+      { name: 'Balance Subscription', status: 'Operational', uptime: '100.0%' },
+      { name: 'Price Subscription', status: 'Operational', uptime: '100.0%' },
+      { name: 'Webhooks', status: 'Operational', uptime: '100.0%' },
+      { name: 'PAYMENTS', status: 'Operational', uptime: '100.0%' },
+      { name: 'ACCOUNT FUNDING', status: 'Operational', uptime: '100.0%' },
+      { name: 'TRADES', status: 'Operational', uptime: '100.0%' },
+      { name: 'ASSETS', status: 'Operational', uptime: '100.0%' },
+    ];
+
+    const SUMSUB_SGP = [
+      { name: 'API', status: 'Operational', uptime: '100.0%' },
+      { name: 'MobileSDK', status: 'Operational', uptime: '100.0%' },
+      { name: 'WebSDK', status: 'Operational', uptime: '100.0%' },
+    ];
+
+    const RECENT_ALERTS = [
+      {
+        id: '1',
+        service: 'Sumsub',
+        component: 'Support integration for Slack',
+        status: 'Unresolved',
+        message: 'Support integration for Slack stopped working, tickets being closed automatically',
+        time: 'May 04, 2026 - 21:46 UTC',
+        severity: 'warning',
+      },
+      {
+        id: '2',
+        service: 'Zero Hash',
+        component: 'Solana Withdrawals & Deposits',
+        status: 'Resolved',
+        message: 'Delayed Solana transactions - all impacted transactions confirmed on-chain',
+        time: 'Apr 23, 2026 - 21:22 UTC',
+        severity: 'success',
+      },
+    ];
+
+    // Track when each component became non-operational
+    const issueStartTimes = {};
+
+    let timerInterval;
+
+    function getTileClass(status) {
+      if (status === 'Operational' || status === 'Resolved') return 'operational';
+      if (status === 'Degraded Performance' || status === 'Monitoring') return 'degraded';
+      if (status === 'Partial Outage' || status === 'Unresolved') return 'outage';
+      if (status === 'Major Outage') return 'outage';
+      return 'maintenance';
+    }
+
+    function getAlertClass(status) {
+      if (status === 'Operational' || status === 'Resolved') return 'operational';
+      if (status === 'Degraded Performance' || status === 'Monitoring') return 'degraded';
+      if (status === 'Partial Outage' || status === 'Unresolved') return 'outage';
+      if (status === 'Major Outage') return 'outage';
+      return 'maintenance';
+    }
+
+    function countIssues(items) {
+      return items.filter(i => i.status !== 'Operational' && i.status !== 'Resolved').length;
+    }
+
+    function formatDuration(ms) {
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      const days = Math.floor(hours / 24);
+
+      if (days > 0) return `${days}d ${hours % 24}h`;
+      if (hours > 0) return `${hours}h ${minutes % 60}m`;
+      if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+      return `${seconds}s`;
+    }
+
+    function getTimerHTML(componentKey, status) {
+      if (status === 'Operational' || status === 'Resolved') {
+        delete issueStartTimes[componentKey];
+        return '';
+      }
+
+      if (!issueStartTimes[componentKey]) {
+        issueStartTimes[componentKey] = Date.now();
+      }
+
+      const elapsed = Date.now() - issueStartTimes[componentKey];
+      return `<div class="tile-timer">${formatDuration(elapsed)}</div>`;
+    }
+
+    function renderTile(item, service, componentId) {
+      const componentKey = `${service}-${componentId}`;
+      const tileClass = getTileClass(item.status);
+      const timerHTML = getTimerHTML(componentKey, item.status);
+
+      return `<div class="tile ${tileClass}" data-key="${componentKey}" data-status="${item.status}">
+        <div class="tile-name">${item.name}</div>
+        <div class="tile-status">${item.status}</div>
+        <div class="tile-uptime">${item.uptime} uptime</div>
+        ${timerHTML}
+      </div>`;
+    }
+
+    function renderAlert(alert) {
+      const alertClass = alert.severity === 'success' ? 'success' : alert.severity === 'warning' ? 'warning' : '';
+      return `<div class="alert-box ${alertClass}">
+        <div class="alert-header">
+          <span class="alert-service">${alert.service} | ${alert.component}</span>
+          <span class="status ${getAlertClass(alert.status)}">${alert.status}</span>
+        </div>
+        <div class="alert-message">${alert.message}</div>
+        <div class="alert-time">${alert.time}</div>
+      </div>`;
+    }
+
+    function updateTimers() {
+      document.querySelectorAll('.tile').forEach(tile => {
+        const key = tile.getAttribute('data-key');
+        const status = tile.getAttribute('data-status');
+
+        if (status !== 'Operational' && status !== 'Resolved' && issueStartTimes[key]) {
+          const elapsed = Date.now() - issueStartTimes[key];
+          let timerDiv = tile.querySelector('.tile-timer');
+          if (!timerDiv) {
+            timerDiv = document.createElement('div');
+            timerDiv.className = 'tile-timer';
+            tile.appendChild(timerDiv);
+          }
+          timerDiv.textContent = formatDuration(elapsed);
+        }
+      });
+    }
+
+    function updateStats() {
+      const zhIssues = countIssues(ZEROHASH_COMPONENTS);
+      const ssIssues = countIssues(SUMSUB_SGP);
+      const totalIssues = zhIssues + ssIssues;
+
+      document.getElementById('issues-count').textContent = totalIssues;
+      const tileEl = document.getElementById('issues-tile');
+      tileEl.className = 'issues-tile' + (totalIssues > 0 ? ' alert' : ' success');
+    }
+
+    function render() {
+      document.getElementById('zh-tiles').innerHTML = ZEROHASH_COMPONENTS.map((item, i) => renderTile(item, 'zh', i)).join('');
+      document.getElementById('ss-sgp-tiles').innerHTML = SUMSUB_SGP.map((item, i) => renderTile(item, 'ss-sgp', i)).join('');
+      document.getElementById('alerts-container').innerHTML = RECENT_ALERTS.map(renderAlert).join('');
+      updateStats();
+    }
+
+    // Initialize
+    render();
+    timerInterval = setInterval(updateTimers, 1000); // Update timers every second
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+      clearInterval(timerInterval);
+    });
+  </script>
+</body>
+</html>
